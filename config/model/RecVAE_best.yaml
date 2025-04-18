@@ -1,0 +1,41 @@
+foursquare_nyc:
+  dropout_prob: 0.5
+  hidden_dimension: 400
+  gamma: 5e-3
+  learning_rate: 2e-4
+foursquare_tky:
+  dropout_prob: 0.5
+  hidden_dimension: 600
+  gamma: 5e-3
+  learning_rate: 2e-4
+ijcai_15_repeat_buyers_80:
+  dropout_prob:
+  hidden_dimension:
+  gamma:
+insurance:
+  dropout_prob:
+  hidden_dimension:
+  gamma:
+lastfm-1k:
+  dropout_prob:
+  hidden_dimension:
+  gamma:
+lastfm-1m:
+  dropout_prob: 0.1
+  hidden_dimension: 600
+  gamma: 5e-3
+  learning_rate: 2e-4
+ml-1m:
+  dropout_prob: 0.1
+  hidden_dimension: 600
+  gamma: 5e-3
+  learning_rate: 2e-4
+rent_the_runway:
+  dropout_prob: 0.1
+  hidden_dimension: 600
+  gamma: 0.01
+  learning_rate: 2e-4
+tafeng:
+  dropout_prob:
+  hidden_dimension:
+  gamma:

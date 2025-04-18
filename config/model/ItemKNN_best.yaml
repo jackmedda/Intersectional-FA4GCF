@@ -1,0 +1,36 @@
+foursquare_nyc:
+  k: 400
+  learning_rate: 1e-4
+  shrink: 2
+foursquare_tky:
+  k: 200
+  learning_rate: 2e-4
+  shrink: 0
+ijcai_15_repeat_buyers_80:
+  k:
+  learning_rate:
+  shrink:
+insurance:
+  k:
+  learning_rate:
+  shrink:
+lastfm-1k:
+  k:
+  learning_rate:
+  shrink:
+lastfm-1m:
+  k: 10
+  learning_rate: 2e-4
+  shrink: 0.1
+ml-1m:
+  k: 400
+  learning_rate: 2e-4
+  shrink: 2
+rent_the_runway:
+  k: 400
+  learning_rate: 2e-4
+  shrink: 0.5
+tafeng:
+  k:
+  learning_rate:
+  shrink:

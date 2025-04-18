@@ -1,0 +1,15 @@
+# 'USER_ID_FIELD': user_id,
+ITEM_ID_FIELD: video_id
+TIME_FIELD: 'timestamp'
+train_batch_size: 4096
+eval_batch_size: 500000
+# sensitive attributes to be used in the fairness losses and for following analysis
+sensitive_attribute: "onehot_feat0|onehot_feat13"
+
+load_col:
+    inter: [user_id, video_id, timestamp]
+    user: [user_id, onehot_feat0, onehot_feat13, "onehot_feat0|onehot_feat13"]
+unused_col: {'inter': ['timestamp']}
+
+# NCL
+num_clusters: 90

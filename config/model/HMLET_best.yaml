@@ -1,0 +1,33 @@
+foursquare_nyc:
+  activation_function: elu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+foursquare_tky:
+  activation_function: elu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+ijcai_15_repeat_buyers_80:
+insurance:
+  activation_function: elu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+lastfm-1k:
+  activation_function: leakyrelu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+lastfm-1m:
+  activation_function: leakyrelu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+ml-1m:
+  activation_function: elu
+  learning_rate: 2e-4
+  ori_temp: 0.7
+rent_the_runway:
+  activation_function: elu
+  learning_rate: 2e-4
+  ori_temp: 0.5
+tafeng:
+  activation_function: elu
+  learning_rate: 1e-4
+  ori_temp: 0.7

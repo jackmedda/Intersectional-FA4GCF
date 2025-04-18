@@ -1,0 +1,25 @@
+foursquare_nyc:
+  gamma: 0.5
+  learning_rate: 2e-4
+foursquare_tky:
+  gamma: 0.5
+  learning_rate: 2e-4
+ijcai_15_repeat_buyers_80:
+insurance:
+  gamma: 0.5
+  learning_rate: 1e-4
+lastfm-1k:
+  gamma: 0.5
+  learning_rate: 1e-4
+lastfm-1m:
+  gamma: 0.5
+  learning_rate: 2e-4
+ml-1m:
+  gamma: 0.5
+  learning_rate: 2e-4
+rent_the_runway:
+  gamma: 1.5
+  learning_rate: 2e-4
+tafeng:
+  gamma: 0.5
+  learning_rate: 2e-4

@@ -1,0 +1,6 @@
+embedding_size: 64
+encoder: "LightGCN"   # "MF" or "lightGCN"
+gamma: 0.5
+weight_decay: 1e-6
+
+n_layers: 3  # needed for LightGCN

@@ -29,6 +29,9 @@ eval_metric: ndcg
 # metric to evaluate the property to perturb. choices ["consumer_DP_across_random_samples", "consumer_DP", "provider_DP", "UC"]
 pert_metric: consumer_DP
 
+fairness_slack: 0.01  # only for consumer_DP
+leaky_insensitive_alpha: 0.2  # for leaky epsilon-insensitive loss below eps
+
 edge_additions: True
 
 # select which set need to be used to optimize the exp_metric perturbation_trainer. Choices ["rec", "train", "valid", "test", "train+valid"]

@@ -258,33 +258,33 @@ class ConsumerDPLoss(FairLoss):
 
         self.adv_group_data = adv_group_data
         self.deactivate_gradient = kwargs.get("deactivate_gradient", True)
+        self.alpha = kwargs.get("alpha", 1.0)
+        self.eps = kwargs.get("eps", 0.01)
 
     def forward(self, _input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         if self.data_feat is None:
             raise AttributeError('each forward call should be preceded by a call of `update_data_feat`')
 
         groups = self.data_feat[self.discriminative_attribute].unique()
-        masks = []
-        for gr in groups:
-            masks.append((self.data_feat[self.discriminative_attribute] == gr))
-        masks = torch.stack(masks)
+        masks = (self.data_feat[self.discriminative_attribute] == groups.unsqueeze(1)).to(_input.device)
 
         loss_values = self.ranking_loss_function(_input, target)
 
-        masked_loss = []
-        for gr, mask in zip(groups, masks):
-            masked_loss.append(loss_values[mask].mean(dim=0))
-        masked_loss = torch.stack(masked_loss)
+        masked_loss = torch.where(masks.unsqueeze(-1), loss_values, 0.0)
+        masked_loss = masked_loss.sum(dim=1) / masks.sum(dim=1, keepdim=True)
 
         fair_loss = None
         total_loss = None
-        for gr_i_idx in range(len(groups)):
-            if self.adv_group_data[0] == "global":
-                if groups[gr_i_idx] != self.adv_group_data[1]:
-                    # the loss optimizes towards -1, but the global loss is positive
-                    fair_loss = (masked_loss[gr_i_idx] - (-self.adv_group_data[2])).abs()
-                    total_loss = fair_loss if total_loss is None else total_loss + fair_loss
-            else:
+        if self.adv_group_data[0] == "global":
+            disparity = self.adv_group_data[2] - masked_loss
+            pos = torch.clamp(disparity - self.eps, min=0.0)          # d >= eps region
+            mid = torch.clamp(self.eps - disparity, min=0.0)          # 0 < d < eps region
+            mid = mid * (disparity > 0).float()                       # kill leak when d <= 0
+
+            fair_loss = (pos + self.alpha * mid)**2
+            total_loss = fair_loss.mean()
+        else:
+            for gr_i_idx in range(len(groups)):
                 gr_i = groups[gr_i_idx]
                 for gr_j_idx in range(gr_i_idx + 1, len(groups)):
                     l_val = masked_loss[gr_i_idx]
@@ -301,7 +301,10 @@ class ConsumerDPLoss(FairLoss):
 
         self.update_data_feat(None)
 
-        return fair_loss / max(int(math.comb(len(groups), 2)), 1)
+        if self.adv_group_data[0] == "global":
+            return total_loss
+        else:
+            return total_loss / max(int(math.comb(len(groups), 2)), 1)
 
 
 class ProviderDPLoss(FairLoss):

@@ -35,8 +35,8 @@ for folder, subfolders, files in os.walk(exp_path):
                 base_plots_path = plots_path if 1 <= int(subf) <= 15 else psi_impact_plots_path
                 temp_folder = os.path.join(base_plots_path, dset, mod, sa)
                 del_dist_giant_missing = False
+                plots_subf = [f for f in os.listdir(temp_folder) if f.startswith(f"{subf}_")]
                 if args.do_not_skip_if_no_del_dist_giant:
-                    plots_subf = [f for f in os.listdir(temp_folder) if f.startswith(f"{subf}_")]
                     if len(plots_subf) > 0:
                         del_dist_giant_missing = not os.path.exists(os.path.join(temp_folder, plots_subf[0], 'del_dist_giant.csv'))
 

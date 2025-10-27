@@ -283,7 +283,7 @@ if __name__ == "__main__":
                 axx.get_legend().remove()
 
                 fig.savefig(
-                    os.path.join(psi_out_path, ('user' if i == 0 else 'item') + '_varying_psi_lineplot.png'),
+                    os.path.join(psi_out_path, ('user' if i == 0 else 'item') + '_varying_psi_lineplot.pdf'),
                     bbox_inches='tight', pad_inches=0, dpi=300
                 )
                 plt.close(fig)
@@ -294,7 +294,7 @@ if __name__ == "__main__":
             markerscale=0.7, handlelength=5, # handletextpad=4, columnspacing=2, borderpad=0.1
         )
         figlegend.savefig(
-            os.path.join(os.path.dirname(out_path), 'legend_psi_impact.png'),
+            os.path.join(os.path.dirname(out_path), 'legend_psi_impact.pdf'),
             dpi=300, bbox_inches="tight", pad_inches=0
         )
 
@@ -408,26 +408,33 @@ if __name__ == "__main__":
                 row_col_val = first_best_pol_orig_df_pivot.loc[row_idx, col_idx]
                 first_best_pol_orig_df_pivot.loc[row_idx, col_idx] = pval_str + row_col_val
 
-    with open(os.path.join(os.path.dirname(out_path), "best_policy_compare_orig_dp_utility.tex"), "w") as tex_file:
-        best_policy_tex_text = first_best_pol_orig_df_pivot.to_latex(
-            column_format=">{\\raggedright}p{7.5mm}>{\\raggedright}p{4mm}l*{9}{|>{\\raggedright}p{2.5mm}rr}",
-            multicolumn=True,
-            multicolumn_format="c|",
-            multirow=True,
-            escape=False
-        ).replace(
-            "NDCG", r"NDCG $\uparrow$"
-        ).replace(
-            "$\Delta$", "$\Delta$ $\downarrow_0$"
-        ).replace(
-            "\multirow[t]", "\multirow[c]"
-        )
-        for dset in dataset_map.values():
-            best_policy_tex_text = best_policy_tex_text.replace('{' + dset + '}', '{\\rotatebox[origin=c]{90}{' + dset + '}}')
+    first_best_pol_orig_df_pivot_rq1 = first_best_pol_orig_df_pivot.loc[first_best_pol_orig_df_pivot.index.get_level_values(0).isin(['KRECS', 'LFM1M', 'ML1M'])]
+    first_best_pol_orig_df_pivot_rq2 = first_best_pol_orig_df_pivot.loc[first_best_pol_orig_df_pivot.index.get_level_values(0).isin(['KRECB', 'KRECS', 'ML1MD'])]
+    
+    for rq_i, first_best_pol_orig_df_pivot_to_latex in enumerate(
+            [first_best_pol_orig_df_pivot, first_best_pol_orig_df_pivot_rq1, first_best_pol_orig_df_pivot_rq2]
+    ):
+        latex_filename = "best_policy_compare_orig_dp_utility.tex" if rq_i == 0 else f"best_policy_compare_orig_dp_utility_rq{rq_i}.tex"
+        with open(os.path.join(os.path.dirname(out_path), latex_filename), "w") as tex_file:
+            best_policy_tex_text = first_best_pol_orig_df_pivot_to_latex.to_latex(
+                column_format=">{\\raggedright}p{2mm}>{\\raggedright}p{10mm}l*{9}{|>{\\raggedright}p{2.5mm}rr}",
+                multicolumn=True,
+                multicolumn_format="c|",
+                multirow=True,
+                escape=False
+            ).replace(
+                "NDCG", r"NDCG $\uparrow$"
+            ).replace(
+                "$\Delta$", "$\Delta$ $\downarrow_0$"
+            ).replace(
+                "\multirow[t]", "\multirow[c]"
+            )
+            for dset in dataset_map.values():
+                best_policy_tex_text = best_policy_tex_text.replace('{' + dset + '}', '{\\rotatebox[origin=c]{90}{' + dset + '}}')
 
-        best_policy_tex_text = re.sub(r'(\s*&)+\s*\\\\\n', '', best_policy_tex_text)
+            best_policy_tex_text = re.sub(r'(\s*&)+\s*\\\\\n', '', best_policy_tex_text)
 
-        tex_file.write(best_policy_tex_text)
+            tex_file.write(best_policy_tex_text)
 
     # Mini Heatmaps
     heatmaps_path = os.path.join(os.path.dirname(out_path), 'mini_heatmaps')
@@ -488,7 +495,7 @@ if __name__ == "__main__":
                     ax.tick_params(length=0)
                     ax.xaxis.tick_top()
                     fig.savefig(
-                        os.path.join(mini_heatmap_path, f"{dset}_{s_attr}_mini_heatmap.png"),
+                        os.path.join(mini_heatmap_path, f"{dset}_{s_attr}_mini_heatmap.pdf"),
                         dpi=300, bbox_inches="tight", pad_inches=0
                     )
                     plt.close(fig)
@@ -498,7 +505,7 @@ if __name__ == "__main__":
         colorbar = cbar_fig.colorbar(mappable, cax=cbar_ax, orientation="vertical")
         colorbar.ax.set_yticklabels([float(t.get_text()) for t in colorbar.ax.get_yticklabels()])
         cbar_fig.savefig(
-            os.path.join(heatmaps_path, spl, "heatmaps_colorbar.png"), dpi=300, bbox_inches="tight", pad_inches=0
+            os.path.join(heatmaps_path, spl, "heatmaps_colorbar.pdf"), dpi=300, bbox_inches="tight", pad_inches=0
         )
         plt.close(cbar_fig)
 
@@ -648,6 +655,6 @@ if __name__ == "__main__":
                 # )
                 # giant_fig.tight_layout(pad=0.4, w_pad=0.5, h_pad=0.4)
                 giant_fig.savefig(
-                    os.path.join(os.path.dirname(out_path), f"{giant_sa}_{giant_mod}_{'_'.join(rq3_dsets)}_del_dist_plot_per_gm.png"),
+                    os.path.join(os.path.dirname(out_path), f"{giant_sa}_{giant_mod}_{'_'.join(rq3_dsets)}_del_dist_plot_per_gm.pdf"),
                     bbox_inches="tight", pad_inches=0, dpi=250
                 )

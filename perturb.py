@@ -99,9 +99,9 @@ def perturb(config, model, _rec_data, _full_dataset, _train_data, _valid_data, _
     wandb_mode = kwargs.get("wandb_mode", "disabled")
     overwrite = kwargs.get("overwrite", False)
 
-    perts_filename = os.path.join(base_perts_file, f"cf_data.pkl")
-    users_order_file = os.path.join(base_perts_file, f"users_order.pkl")
-    model_preds_file = os.path.join(base_perts_file, f"model_rec_test_preds.pkl")
+    perts_filename = os.path.join(base_perts_file, "cf_data.pkl")
+    users_order_file = os.path.join(base_perts_file, "users_order.pkl")
+    model_preds_file = os.path.join(base_perts_file, "model_rec_test_preds.pkl")
     checkpoint_path = os.path.join(base_perts_file, "checkpoint.pth")
 
     sh = logging.StreamHandler()

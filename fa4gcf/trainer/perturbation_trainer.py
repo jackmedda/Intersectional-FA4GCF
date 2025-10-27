@@ -545,7 +545,7 @@ class PerturbationTrainer:
                          # 'User id: {}, '.format(str(users_ids)) +
                          'Epoch: {}, '.format(epoch + 1) +
                          'loss: {:.4f}, '.format(loss_total.item()) +
-                         'exp loss: {:.4f}, '.format(pert_loss) +
+                         'perturb loss: {:.4f}, '.format(pert_loss) +
                          'graph loss: {:.4f}, '.format(loss_graph_dist.item()) +
                          'perturbed edges: {:.4f}'.format(int(orig_loss_graph_dist.item())))
         if self.verbose:
@@ -674,6 +674,8 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
         self.initialize_optimizer()
 
     def _initialize_pert_loss(self):
+        eps_per_pair = (1 / (2 / len(self.sensitive_groups))) * self.config["fairness_slack"]  # scale global slack to per group pair slack
+
         self._pert_loss = self._pert_loss(
             *self._pert_loss_args[self.pert_metric.lower()],
             topk=self.cf_topk,
@@ -681,7 +683,9 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
             adv_group_data=(self.only_adv_group, self.global_most_distant_group, self.results[self.global_most_distant_group]),
             deactivate_gradient=self.gradient_deactivation_constraint,
             only_relevant=self.coverage_loss_only_relevant,
-            groups_distrib=self.item_discriminative_groups_distrib
+            groups_distrib=self.item_discriminative_groups_distrib,
+            eps=eps_per_pair,
+            alpha=self.config["leaky_insensitive_alpha"]
         )
 
         if self._pert_loss.loss_type() == 'Provider':

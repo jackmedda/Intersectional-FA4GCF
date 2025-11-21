@@ -276,12 +276,13 @@ class ConsumerDPLoss(FairLoss):
         fair_loss = None
         total_loss = None
         if self.adv_group_data[0] == "global":
-            disparity = self.adv_group_data[2] - masked_loss
+            disparity = self.adv_group_data[2] - masked_loss.abs()    # abs because loss is negative
             pos = torch.clamp(disparity - self.eps, min=0.0)          # d >= eps region
             mid = torch.clamp(self.eps - disparity, min=0.0)          # 0 < d < eps region
             mid = mid * (disparity > 0).float()                       # kill leak when d <= 0
+            alpha = torch.where(mid > 0, self.alpha, 1.0)
 
-            fair_loss = (pos + self.alpha * mid)**2
+            fair_loss = alpha * (pos + mid)**2
             total_loss = fair_loss.mean()
         else:
             for gr_i_idx in range(len(groups)):

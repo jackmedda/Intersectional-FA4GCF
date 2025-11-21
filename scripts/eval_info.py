@@ -12,6 +12,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import sklearn.feature_selection as sk_feats
+from sklearn.metrics import pairwise_distances
 
 current_file = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(current_file, os.pardir))
@@ -19,6 +20,7 @@ sys.path.append(os.path.join(current_file, os.pardir))
 import fa4gcf.utils as utils
 import fa4gcf.evaluation as evaluation
 from fa4gcf.config import Config
+from fa4gcf.trainer.perturbation_sampler import PerturbationSampler
 from fa4gcf.utils.case_study import (
     pref_data_from_checkpoint,
     extract_metrics_from_perturbed_edges
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     parser.add_argument('--exp_path', '--e', required=True)
     parser.add_argument('--base_plots_path', '--bpp', default=os.path.join('scripts', 'plots'))
     parser.add_argument('--gpu_id', default=1)
-    parser.add_argument('--psi_impact', action="store_true")
+    parser.add_argument('--alpha_ablation', action="store_true")
     args = parser.parse_args()
 
     consumer_group_map = {
@@ -179,11 +181,8 @@ if __name__ == "__main__":
     edge_additions = config['edge_additions']
     eval_metric = config['eval_metric'].upper()
     plots_path = os.path.join(args.base_plots_path, dset, mod, s_attr, f"{cid}_{curr_policy}")
-    if args.psi_impact:
-        exp_policies_ratios = [config[k + "_ratio"] for k in raw_exp_policies]
-        ratios_str = f" ({'+'.join(map(str, exp_policies_ratios))})"
-        plots_path += ratios_str
-        curr_policy += ratios_str
+    if args.alpha_ablation:
+        plots_path += f"_alpha_{config['leaky_insensitive_alpha']}"
     if not os.path.exists(plots_path):
         os.makedirs(plots_path)
 
@@ -200,7 +199,7 @@ if __name__ == "__main__":
         ]
         _pref_data["Demo Group"] = _pref_data["Demo Group"].map(consumer_group_map[s_attr.lower()]).to_numpy()
 
-        metric_result = evaluation.compute_metric(evaluator, _eval_data, _pref_data, 'cf_topk_pred', 'ndcg')
+        metric_result = evaluation.compute_metric(evaluator, _eval_data, _pref_data, 'cf_topk_pred', eval_metric.lower())
         _pref_data['Value'] = metric_result[:, -1]
         _pref_data['Quantile'] = _pref_data['Value'].map(lambda x: np.ceil(x * 10) / 10 if x > 0 else 0.1)
 
@@ -339,8 +338,6 @@ if __name__ == "__main__":
     sens_gmdf = graph_metrics_df.join(user_metadata[['user_id', 'Sens Attr', 'Demo Group']].set_index('user_id'), on='Node').fillna('Item')
 
     gm_analysis_tables_data = {"del_dist": []}
-
-    breakpoint()
 
     # dset_stats = os.path.join(base_all_plots_path, 'datasets_stats.csv')
     # if os.path.exists(dset_stats):
@@ -544,3 +541,143 @@ if __name__ == "__main__":
             #         os.path.join(plots_path, f"{gm_mod}_del_dist_{_pol}_plot_{dset}.png"),
             #         bbox_inches="tight", pad_inches=0, dpi=250
             #     )
+
+    ## Validation vs Test Shift Distribution Analysis
+
+    def energy_distance_mv(X, Y):
+        """
+        Multivariate Energy distance *squared* (classical formula).
+        Returns the *rooted* metric value (take sqrt) for interpretability.
+        X: [n_x, d], Y: [n_y, d]
+        """
+        Dxx = pairwise_distances(X, X)
+        Dyy = pairwise_distances(Y, Y)
+        Dxy = pairwise_distances(X, Y)
+        Exx = Dxx[np.triu_indices_from(Dxx, 1)].mean() if len(X) > 1 else 0.0
+        Eyy = Dyy[np.triu_indices_from(Dyy, 1)].mean() if len(Y) > 1 else 0.0
+        Exy = Dxy.mean()
+        E2  = 2*Exy - Exx - Eyy            # squared energy
+        return np.sqrt(max(E2, 0.0))       # the actual distance (metric)
+
+    class MockPerturbationTrainer:
+        def __init__(self):
+            consumer_demo_group_map = np.array([consumer_group_map[s_attr.lower()].get(dg, dg) for dg in demo_group_map])
+            adv_dg_group = orig_valid_pref_data.groupby('Demo Group')['Value'].mean().sort_values().index[-1]
+            self.adv_group = (consumer_demo_group_map == adv_dg_group).nonzero()[0][0]
+            self.groups_to_perturb = torch.arange(1, len(consumer_demo_group_map))[consumer_demo_group_map[1:] != adv_dg_group]
+            self.sensitive_attribute = config['sensitive_attribute']
+            self.eval_metric = eval_metric
+
+    mock_pert_trainer = MockPerturbationTrainer()
+    pert_sampler = PerturbationSampler(
+        train_data.dataset,
+        mock_pert_trainer,
+        config
+    )
+    sampled_users, sampled_items = pert_sampler.apply_policies(
+        valid_data.user_df[valid_data.uid_field],
+        orig_valid_pref_data.rename(columns={'Value': eval_metric}),
+    )
+    sampled_users = sampled_users.numpy()
+    sampled_items = sampled_items.numpy()
+    
+    valid_graph_metrics_df = evaluation.GraphMetricsExtractor(
+        valid_data.dataset,
+        upi_kwargs={'sensitive_attribute': [config['sensitive_attribute']]},
+        metrics=gm_metrics_base  # "all"
+    ).extract_graph_metrics_per_node()
+
+    test_graph_metrics_df = evaluation.GraphMetricsExtractor(
+        test_data.dataset,
+        upi_kwargs={'sensitive_attribute': [config['sensitive_attribute']]},
+        metrics=gm_metrics_base  # "all"
+    ).extract_graph_metrics_per_node()
+
+    valid_graph_metrics_df = valid_graph_metrics_df.join(user_metadata[['user_id', 'Sens Attr', 'Demo Group']].set_index('user_id'), on='Node').fillna('Item')
+    test_graph_metrics_df = test_graph_metrics_df.join(user_metadata[['user_id', 'Sens Attr', 'Demo Group']].set_index('user_id'), on='Node').fillna('Item')
+    max_degree = max(valid_graph_metrics_df['Degree'].max(), test_graph_metrics_df['Degree'].max())
+    valid_graph_metrics_df['Degree'] /= max_degree
+    test_graph_metrics_df['Degree'] /= max_degree
+
+    dp_plot_df_per_split = dp_plot_df.pivot(index="Policy", columns="Split").sort_index(axis=1, level=0)
+    dp_plot_df_per_split.columns = [f"{metric}_{split}" for metric, split in dp_plot_df_per_split.columns]
+
+    total_ndcg_gain = (
+        (dp_plot_df_per_split.loc[curr_policy, eval_metric + '_Test'] - dp_plot_df_per_split.loc['Orig', eval_metric + '_Test']) /
+        ((dp_plot_df_per_split.loc[curr_policy, eval_metric + '_Valid'] - dp_plot_df_per_split.loc['Orig', eval_metric + '_Valid']) + 1e-8) 
+    )
+    total_fairness_gain = (
+        (dp_plot_df_per_split.loc[curr_policy, '$\Delta$' + eval_metric + '_Test'] - dp_plot_df_per_split.loc['Orig', '$\Delta$' + eval_metric + '_Test']) /
+        ((dp_plot_df_per_split.loc[curr_policy, '$\Delta$' + eval_metric + '_Valid'] - dp_plot_df_per_split.loc['Orig', '$\Delta$' + eval_metric + '_Valid']) + 1e-8)
+    )
+    total_shift = energy_distance_mv(
+        valid_graph_metrics_df[valid_graph_metrics_df['Demo Group'] != 'Item'].set_index('Node').loc[sampled_users - 1][gm_metrics_base].values,
+        test_graph_metrics_df[test_graph_metrics_df['Demo Group'] != 'Item'].set_index('Node').loc[sampled_users - 1][gm_metrics_base].values
+    )
+    total_shift_df = pd.DataFrame({'Dataset': dset, 'Model': mod, 'Policy': curr_policy, 'Sens Attr': s_attr,
+                                   'Shift': total_shift, f'$\Delta${eval_metric} Gain': total_fairness_gain, f'{eval_metric} Gain': total_ndcg_gain}, index=[0])
+    
+    total_shift_df.to_csv(os.path.join(plots_path, 'total_shift.csv'), index=False)
+
+    records = []
+    for dg in dgs:
+        test_ndcg_gain = dp_plot_df_per_split.loc[curr_policy, dg + '_Test'] - dp_plot_df_per_split.loc['Orig', dg + '_Test']
+        valid_ndcg_gain = dp_plot_df_per_split.loc[curr_policy, dg + '_Valid'] - dp_plot_df_per_split.loc['Orig', dg + '_Valid']
+
+        valid_gm_df = valid_graph_metrics_df[valid_graph_metrics_df['Demo Group'] == dg]
+        valid_gm_df = valid_gm_df[valid_gm_df['Node'].isin(sampled_users - 1)]
+        test_gm_df = test_graph_metrics_df[test_graph_metrics_df['Demo Group'] == dg]
+        test_gm_df = test_gm_df[test_gm_df['Node'].isin(sampled_users - 1)]
+
+        if not valid_gm_df.empty and not test_gm_df.empty:
+            shift = energy_distance_mv(valid_gm_df[gm_metrics_base].values, test_gm_df[gm_metrics_base].values)
+        else:
+            shift = None
+        records.append({
+            'Dataset': dset, 'Model': mod, 'Policy': curr_policy, 'Sens Attr': s_attr, 'Demo Group': dg,
+            'Shift': shift, f'Valid {eval_metric} Gain': valid_ndcg_gain, f'Test {eval_metric} Gain': test_ndcg_gain
+        })
+
+    shift_df_per_group = pd.DataFrame(records)
+    shift_df_per_group.to_csv(os.path.join(plots_path, 'shift_per_group.csv'), index=False)
+    
+    sns.set_theme(style="whitegrid", font_scale=1.0)
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+
+    colors = dict(zip(sorted(shift_df_per_group['Demo Group']), sns.color_palette("rocket", len(shift_df_per_group))))
+
+    # --- Draw the dumbbells ---
+    for i, row in shift_df_per_group.iterrows():
+        x = row['Shift']
+        if x is None or np.isnan(x):
+            continue
+        y_valid, y_test = row[f'Valid {eval_metric} Gain'], row[f'Test {eval_metric} Gain']
+        color = colors[row['Demo Group']]
+
+        # Vertical line connecting Valid and Test
+        ax.plot([x, x], [y_valid, y_test], color=color, lw=2.5, alpha=0.9)
+
+        # Endpoints
+        ax.scatter(x, y_valid, s=55, color='white', edgecolor='black', zorder=3, label='Valid' if i == 0 else "")
+        ax.scatter(x, y_test,  s=55, color='black',  edgecolor='black', zorder=3, label='Test'  if i == 0 else "")
+
+        # Add text label near the higher point
+        y_top = max(y_valid, y_test)
+        ax.annotate(
+            f"{row['Demo Group']}", 
+            xy=(x, y_top), 
+            xytext=(0, 5),  # 5 points above
+            textcoords='offset points',
+            ha='center', va='bottom', fontsize=8
+        )
+
+    # --- Aesthetics ---
+    ax.set_xlabel("Validation ↔ Test Energy Distance (Shift)")
+    ax.set_ylabel(f"{eval_metric.upper()} Gain")
+    # ax.set_title(f"Validation vs Test Generalization — {dset} · {mod} · {curr_policy}\nVertical dumbbells: Valid (○) vs Test (●) Gains")
+
+    ax.legend(loc='upper right', frameon=False)
+    sns.despine()
+    plt.tight_layout()
+    fig.savefig(os.path.join(plots_path, 'shift_dumbbell_plot.png'), bbox_inches="tight", pad_inches=0, dpi=200)
+    plt.close(fig)

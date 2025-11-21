@@ -589,6 +589,10 @@ class PerturbationTrainer:
 
 class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
 
+    # Only the 500 items with the highest predicted relevance will be used to measure the approx NDCG
+    # This prevents the usage of a tremendous amount of memory, due to the pairwise preference function
+    MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS = 1000
+
     def __init__(self, config, dataset, rec_data, model, dist="damerau_levenshtein", **kwargs):
         super(BeyondAccuracyPerturbationTrainer, self).__init__(config, dataset, rec_data, model, **kwargs)
 
@@ -653,6 +657,7 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
                 )
 
         self.determine_adv_group(batched_data.detach().numpy(), rec_model_topk)
+        self.compute_approx_adv_group_ranking_metric(batched_data, self.rec_data)
         pref_data = self._pref_data_sens_and_metric(batched_data.detach().numpy(), rec_model_topk)
         filtered_users, filtered_items = self.pert_sampler.apply_policies(batched_data, pref_data)
 
@@ -674,13 +679,14 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
         self.initialize_optimizer()
 
     def _initialize_pert_loss(self):
-        eps_per_pair = (1 / (2 / len(self.sensitive_groups))) * self.config["fairness_slack"]  # scale global slack to per group pair slack
+        # eps_per_pair is scaled by the upper bound 2 - 4 / number of sensitive groups
+        eps_per_pair = (1 / (2 - 2 / len(self.sensitive_groups))) * self.config["fairness_slack"]  # scale global slack to per group pair slack
 
         self._pert_loss = self._pert_loss(
             *self._pert_loss_args[self.pert_metric.lower()],
             topk=self.cf_topk,
             loss=self._metric_loss,
-            adv_group_data=(self.only_adv_group, self.global_most_distant_group, self.results[self.global_most_distant_group]),
+            adv_group_data=(self.only_adv_group, self.global_most_distant_group, self.approx_results[self.global_most_distant_group]),
             deactivate_gradient=self.gradient_deactivation_constraint,
             only_relevant=self.coverage_loss_only_relevant,
             groups_distrib=self.item_discriminative_groups_distrib,
@@ -690,6 +696,35 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
 
         if self._pert_loss.loss_type() == 'Provider':
             self._check_item_feat_integrity()
+
+    def compute_approx_adv_group_ranking_metric(self, batched_data, eval_data):
+        dset_scores_args = self._get_scores_args(batched_data, eval_data)
+        self.compute_model_predictions(dset_scores_args)
+
+        target = torch.zeros(self.model_scores.shape, dtype=int, device=self.model.device)
+        ground_truth_items = eval_data.dataset.history_item_matrix()[0][batched_data]
+        target[torch.arange(target.shape[0]).unsqueeze(1).expand(-1, ground_truth_items.shape[1]), ground_truth_items] = 1
+        target[:, 0] = 0  # remove padding item
+        approx_ranking_metric_loss = self._metric_loss()
+        approx_ranking_metric_loss.__MAX_TOPK_ITEMS__ = self.MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS
+
+        approx_ranking_metric = []
+        for scores_batch, target_batch in zip(
+            torch.split(self.model_scores, 16),
+            torch.split(target, 16)
+        ):
+            approx_ranking_metric.extend((-approx_ranking_metric_loss(scores_batch, target_batch)).detach().cpu().squeeze().numpy())
+
+        pref_utility_data = pd.DataFrame(
+            zip(batched_data, approx_ranking_metric, self.dataset.user_feat[self.sensitive_attribute][batched_data].numpy()),
+            columns=['user_id', 'approx_' + self.eval_metric, 'Demo Group']
+        )
+        
+        self.approx_results = {}
+        for group in range(1, len(self.sensitive_groups) + 1):
+            self.approx_results[group] = pref_utility_data.loc[pref_utility_data['Demo Group'] == group, 'approx_' + self.eval_metric].mean()
+        
+        torch.cuda.empty_cache()
 
     def logging_pert_per_group(self, new_example, model_topk):
         em_str = self.eval_metric.upper()
@@ -958,11 +993,8 @@ class BeyondAccuracyPerturbationTrainer(PerturbationTrainer):
         train_start = time.time()
         torch.cuda.empty_cache()
 
-        # Only the 500 items with the highest predicted relevance will be used to measure the approx NDCG
-        # This prevents the usage of a tremendous amount of memory, due to the pairwise preference function
-        MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS = 500
-        if self._pert_loss.ranking_loss_function.__MAX_TOPK_ITEMS__ != MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS:
-            self._pert_loss.ranking_loss_function.__MAX_TOPK_ITEMS__ = MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS
+        if self._pert_loss.ranking_loss_function.__MAX_TOPK_ITEMS__ != self.MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS:
+            self._pert_loss.ranking_loss_function.__MAX_TOPK_ITEMS__ = self.MEMORY_PERFORMANCE_MAX_LOSS_TOPK_ITEMS
 
         if self.mini_batch_descent:
             self.cf_optimizer.zero_grad()

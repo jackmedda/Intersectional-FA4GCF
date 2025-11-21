@@ -20,6 +20,7 @@ if __name__ == "__main__":
     parser.add_argument('--model', '-m', required=True)
     parser.add_argument('--sensitive_attribute', '-sa', required=True)
     parser.add_argument('--scores_dataframe_path', '-sdf', required=True)
+    parser.add_argument('--add_padding', action='store_true')
     parser.add_argument('--gpu_id', default=1)
     args, _ = parser.parse_known_args()
 

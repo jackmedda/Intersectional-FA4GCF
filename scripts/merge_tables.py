@@ -17,6 +17,8 @@ import matplotlib.patches as mpl_patches
 import matplotlib.transforms as mpl_trans
 import matplotlib.legend_handler as mpl_legend_handlers
 
+from scipy.stats import spearmanr
+
 
 def update_plt_rc():
     SMALL_SIZE = 16
@@ -53,7 +55,7 @@ if __name__ == "__main__":
     parser.add_argument('--plots_path_to_merge', '-pptm', default=os.path.join(current_file, 'plots'))
     parser.add_argument('--base_plots_path', '-bpp', default=os.path.join(current_file, 'merged_plots'))
     parser.add_argument('--exclude', '-ex', nargs='+', help='Exclude certain config ids', default=None)
-    parser.add_argument('--psi_impact', action="store_true")
+    parser.add_argument('--alpha_ablation', action="store_true")
 
     args = parser.parse_args()
     args.dataset = args.dataset.lower()
@@ -70,8 +72,8 @@ if __name__ == "__main__":
     PVAL_005 = '*'
 
 
-    def pval_symbol(pval, n_groups=2):  
-        if pval < (0.05 / (n_groups // 2)):
+    def pval_symbol(pval):  
+        if pval < 0.05:
             return PVAL_005
 
         return ''
@@ -116,13 +118,15 @@ if __name__ == "__main__":
     edge_perturbation_impact = {}
     plots_path = os.path.join(args.plots_path_to_merge, args.dataset)
     del_dist_giant_df_list = []
+    shift_per_group_df_list = []
+    total_shift_df_list = []
     for dirpath, dirnames, filenames in os.walk(plots_path):
         if filenames:
             for x in filenames:
                 if x == 'DP_barplot.csv':
                     metadata = dirpath.split(args.dataset + os.sep)[1]
                     mod, s_attr, conf_pol = metadata.split(os.sep)
-                    conf_id, policy = conf_pol.split('_')
+                    conf_id, policy = conf_pol.split('_', maxsplit=1)
 
                     metadata_map = {
                         'Dataset': args.dataset,
@@ -139,6 +143,9 @@ if __name__ == "__main__":
                         df[key] = val
 
                     rel_cols = ['Policy'] + list(metadata_map.keys())
+                    if args.alpha_ablation:
+                        df = df[df['Policy'] != 'Orig']
+                        df['Policy'] = policy
                     loaded_dfs.append(df[rel_cols + ['Split', metric.upper(), 'DP', 'pvalue']])
 
                     g_df = df[df.columns[~df.columns.isin([delta_col, 'Split', 'DP', 'pvalue'])]].melt(rel_cols).rename(columns={
@@ -147,6 +154,10 @@ if __name__ == "__main__":
                     group_dfs.append(g_df)
                 elif x == 'del_dist_giant.csv':
                     del_dist_giant_df_list.append(pd.read_csv(os.path.join(dirpath, x)))
+                elif x == 'shift_per_group.csv':
+                    shift_per_group_df_list.append(pd.read_csv(os.path.join(dirpath, x)))
+                elif x == 'total_shift.csv':
+                    total_shift_df_list.append(pd.read_csv(os.path.join(dirpath, x)))
 
     orig_pert_pval_data = []
     orig_pert_pval_cols = ['Dataset', 'Model', 'GroupAttribute', 'Policy', 'Split', 'Metric', 'P_value']
@@ -157,7 +168,7 @@ if __name__ == "__main__":
                 if x == 'orig_pert_pval_dict.pkl' and any(x in dirpath for x in dataset_map.keys()):
                     metadata = dirpath.split(all_dsets_path + os.sep)[1]
                     dset, mod, s_attr, conf_pol = metadata.split(os.sep)
-                    conf_id, policy = conf_pol.split('_')
+                    conf_id, policy = conf_pol.split('_', maxsplit=1)
 
                     with open(os.path.join(dirpath, 'orig_pert_pval_dict.pkl'), 'rb') as f:
                         pval = pickle.load(f)
@@ -167,6 +178,12 @@ if __name__ == "__main__":
                                     [dset, mod, s_attr, policy, spl, metr, pval_value]
                                 )
 
+    if shift_per_group_df_list:
+        shift_per_group_df = pd.concat(shift_per_group_df_list, axis=0, ignore_index=True)
+        
+    if total_shift_df_list:
+        total_shift_df = pd.concat(total_shift_df_list, axis=0, ignore_index=True)
+    
     orig_pert_pval_df = pd.DataFrame(orig_pert_pval_data, columns=orig_pert_pval_cols)
 
     cols_order = ["Dataset", "Model", "GroupAttribute", "Policy", "Split", "Metric", "Value", "pvalue"]
@@ -194,107 +211,152 @@ if __name__ == "__main__":
 
     first_total_df = pd.concat(first_merged_dfs_to_merge, axis=0, ignore_index=True)
     first_total_df["Model"] = first_total_df["Model"].replace('SVD_GCN', 'SVD-GCN')
+    first_total_df["Significance"] = first_total_df["pvalue"] < (0.05 / 4)  # bonferroni correction for 4 groups
     first_total_df.to_csv(os.path.join(os.path.dirname(out_path), 'total_raw_perc_table.csv'), index=False)
 
-    if args.psi_impact:
+    # if 'itfr_plots' in plots_path and first_total_df['Dataset'].nunique() == len(dataset_order):
+    #     # generate latex table with dataset in multicolumn written as "LFM1M (G | A)", below the metrics NDCG $\uparrow$ and DP $\downarrow$
+    #     # on the rows ITFR for results with policy == "ITFR" and "Ours" otherwise
+    #     # Add the pval_symbol next to the NDCG and DP values
+        
+
+    if args.alpha_ablation:
         if first_total_df.Policy.str.contains('IP+IR', regex=False).any():
-            def remap_ipir_psi_values(val):
-                psi_values = re.search('(?<=\().*(?=\))', val)[0]
-                return f"IR+IP ({'+'.join(psi_values.split('+')[::-1])})"
+            def remap_ipir_alpha_values(val):
+                if '_' in val:
+                    alpha_values = val.split('_', maxsplit=1)[1]
+                    return f"IR+IP_{alpha_values}"
+                else:
+                    return "IR+IP"
             first_total_df['Policy'] = first_total_df['Policy'].map(
-                lambda x: remap_ipir_psi_values(x) if 'IP+IR' in x else x
+                lambda x: remap_ipir_alpha_values(x) if 'IP+IR' in x else x
             )
-        base_exp_ratios = '(0.35+0.2)'
-        # base_exp_mask = first_df.Policy.str.contains('(0.35+0.2)', regex=False)
-        # base_exp_df = first_df[base_exp_mask].reset_index(drop=True)
-        # psi_impact_df = first_df[~base_exp_mask].reset_index(drop=True)
-
-        first_total_df = first_total_df[first_total_df['Split'] == 'Test'].reset_index(drop=True)
+        base_alpha = '0.2'
         dp_key = '$\Delta$'
-        first_total_df = first_total_df.replace('DP', dp_key)
-        fixed_user_psi = first_total_df[first_total_df['Policy'].str.contains('(0.35+', regex=False)]
-        fixed_item_psi = first_total_df[first_total_df['Policy'].str.contains('+0.2)', regex=False)]
+        alpha_key = r'$\alpha$'
 
-        for i, (fixed_psi_df, varying_psi_type) in enumerate(
-                zip([fixed_item_psi, fixed_user_psi], ['$\Psi_{\mathcal{U}}$', '$\Psi_{\mathcal{I}}$'])
-        ):
-            fixed_psi_df[varying_psi_type] = fixed_psi_df['Policy'].map(
-                lambda p: p.split('(')[1].replace(')', '').split('+')[i]
-            ).astype(float)
-            fixed_psi_df['Policy'] = fixed_psi_df['Policy'].map(lambda p: p.split()[0])
-            fixed_psi_df['Setting'] = fixed_psi_df[['Policy', 'Dataset', 'Model', 'GroupAttribute']].apply(
-                lambda x: f'({",".join(x)})', axis=1
-            )
+        alpha_df = first_total_df[first_total_df['Split'] == 'Test'].reset_index(drop=True)
+        alpha_df = alpha_df.replace('DP', dp_key)
+        # base_alpha_mask = np.logical_not(alpha_df['Policy'].str.contains('_alpha_'))
+        # alpha_df.loc[base_alpha_mask, 'Policy'] = alpha_df.loc[base_alpha_mask, 'Policy'] + f'_alpha_{base_alpha}'
 
-            style_kws = dict(
-                style='Metric',
-                markers={dp_key: 'X', 'NDCG': 'P'},
-                dashes={dp_key: (), 'NDCG': (2, 1)},
-                errorbar=None,
-                lw=5,
-                markersize=30
-            )
+        alpha_df[['Policy', alpha_key]] = alpha_df['Policy'].str.split('_alpha_', expand=True).values
+        alpha_df[alpha_key] = alpha_df[alpha_key].astype(float)
+        alpha_df['Setting'] = alpha_df[['Policy', 'Dataset', 'Model', 'GroupAttribute']].apply(
+            lambda x: f'({",".join(x)})', axis=1
+        )
+        # remap alpha values to 1,2,3,4 for 0.05,0.1,0.2,0.5 for even spacing on x-axis
+        alpha_df[alpha_key] = alpha_df[alpha_key].map({0.05: 1, 0.1: 2, 0.2: 3, 0.5: 4})
 
-            # psi_dsets_order = ['LF1K', 'ML1M']
-            psi_dsets_order = ['LF1M', 'ML1M']
+        dset_alpha_df = alpha_df[alpha_df['Dataset'] == dataset_map[args.dataset]]
 
-            fixed_psi_df_gby = fixed_psi_df.groupby(['Policy', 'Dataset', 'Model', 'GroupAttribute'])
-            for dset_i, ((psi_pol, psi_dset, psi_mod, psi_grattr), setting_psi_df) in enumerate(fixed_psi_df_gby):
-                psi_out_path = os.path.join(
-                    os.path.dirname(out_path), 'varying_psi', psi_dset, psi_mod, psi_grattr, psi_pol
-                )
-                os.makedirs(psi_out_path, exist_ok=True)
+        fig, ax = plt.subplots(1, 1, figsize=(16, 4))
+        palette = sns.color_palette('colorblind')
+        # ax.margins(y=0.1)
+        sns.lineplot(
+            x=alpha_key, y='Value', data=dset_alpha_df[dset_alpha_df['Metric'] == dp_key], ax=ax,
+            color='crimson', lw=2, errorbar=('ci', 95)
+        )
+        sns.scatterplot(
+            x=alpha_key, y='Value', data=dset_alpha_df[dset_alpha_df['Metric'] == dp_key], ax=ax,
+            color='crimson', s=50 #, label='DP'
+        )
+        ax.set_xlabel(alpha_key)
+        # ax.set_ylabel(f'{dset_psi_df["Setting"].iloc[0]}\n{dp_key}', color=ax_color)
+        ax.set_ylabel(dp_key)
+        ax.tick_params(axis='y')
 
-                fig, ax = plt.subplots(1, 1, figsize=(10, 4))
-                colors = sns.color_palette('cividis', n_colors=4)
-                ax_color, axx_color = colors[0], colors[-2]
-                ax.margins(y=0.1)
-                sns.lineplot(
-                    x=varying_psi_type, y='Value', data=setting_psi_df[setting_psi_df['Metric'] == dp_key],
-                    color=ax_color, ax=ax, **style_kws
-                )
-                ax.set_xlabel('')
-                # ax.set_ylabel(f'{dset_psi_df["Setting"].iloc[0]}\n{dp_key}', color=ax_color)
-                ax.set_ylabel(dp_key, color=ax_color)
-                ax.tick_params(axis='y', labelcolor=ax_color)
+        # axx = ax.twinx()
+        # axx.margins(y=0.1)
+        # sns.lineplot(
+        #     x=varying_psi_type, y='Value', data=setting_psi_df[setting_psi_df['Metric'] == 'NDCG'],
+        #     color=axx_color, ax=axx, **style_kws
+        # )
+        # axx.set_xlabel('')
+        # axx.set_ylabel('NDCG', color=axx_color)
+        # axx.tick_params(axis='y', labelcolor=axx_color)
 
-                axx = ax.twinx()
-                axx.margins(y=0.1)
-                sns.lineplot(
-                    x=varying_psi_type, y='Value', data=setting_psi_df[setting_psi_df['Metric'] == 'NDCG'],
-                    color=axx_color, ax=axx, **style_kws
-                )
-                axx.set_xlabel('')
-                axx.set_ylabel('NDCG', color=axx_color)
-                axx.tick_params(axis='y', labelcolor=axx_color)
+        ax.grid(axis='both', which='major', ls=':', color='k')
+        ax.xaxis.set_major_locator(mpl_tickers.FixedLocator(alpha_df[alpha_key].sort_values().unique().astype(float)))
+        ax.xaxis.set_major_formatter(mpl_tickers.FixedFormatter(['0.05','0.1','0.2','0.5']))
+        # ax.xaxis.set_major_formatter(mpl_tickers.StrMethodFormatter('{x:.2f}'))
+        # axx.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter("{x:.2f}"))
+        # locator with at most 3 decimal places for the y-axis
+        ax.yaxis.set_major_locator(mpl_tickers.LinearLocator(4))
+        ax.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter('{x:.2f}'))
+        # axx.yaxis.set_major_locator(mpl_tickers.LinearLocator(6))
 
-                ax.grid(axis='both', which='major', ls=':', color='k')
-                ax.set_xticks(fixed_psi_df[varying_psi_type].unique())
-                ax.xaxis.set_major_formatter(mpl_tickers.FuncFormatter(lambda x, pos: f"{int(x * 100)}%"))
-                ax.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter("{x:.2f}"))
-                axx.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter("{x:.2f}"))
-                ax.yaxis.set_major_locator(mpl_tickers.LinearLocator(6))
-                axx.yaxis.set_major_locator(mpl_tickers.LinearLocator(6))
+        ax_handles, ax_labels = ax.get_legend_handles_labels()
+        # axx_handles, axx_labels = axx.get_legend_handles_labels()
+        # handles, labels = ax_handles + axx_handles, ax_labels + axx_labels
+        handles, labels = ax_handles, ax_labels
+        # ax.get_legend().remove()
+        # axx.get_legend().remove()
 
-                ax_handles, ax_labels = ax.get_legend_handles_labels()
-                axx_handles, axx_labels = axx.get_legend_handles_labels()
-                handles, labels = ax_handles + axx_handles, ax_labels + axx_labels
-                ax.get_legend().remove()
-                axx.get_legend().remove()
+        fig.savefig(
+            os.path.join(out_path, f'{args.dataset}_varying_alpha_lineplot.pdf'),
+            bbox_inches='tight', pad_inches=0, dpi=300
+        )
+        plt.close(fig)
 
-                fig.savefig(
-                    os.path.join(psi_out_path, ('user' if i == 0 else 'item') + '_varying_psi_lineplot.pdf'),
-                    bbox_inches='tight', pad_inches=0, dpi=300
-                )
-                plt.close(fig)
+        # Global
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+        palette = sns.color_palette('colorblind', n_colors=alpha_df['Dataset'].nunique())
+        # ax.margins(y=0.1)
+        hue_order = ["LFM1M", "ML1M", "ML1MD", "KRECS", "KRECB"]
+        sns.lineplot(
+            x=alpha_key, y='Value', data=alpha_df[alpha_df['Metric'] == dp_key], ax=ax, hue='Dataset',
+            hue_order=hue_order, style='Dataset', palette=palette, lw=2, errorbar=('ci', 95)
+        )
+        sns.scatterplot(
+            x=alpha_key, y='Value', data=alpha_df[alpha_df['Metric'] == dp_key], ax=ax,
+            hue='Dataset', hue_order=hue_order, palette=palette, s=50 #, label='DP'
+        )
+        ax.set_xlabel(alpha_key)
+        # ax.set_ylabel(f'{dset_psi_df["Setting"].iloc[0]}\n{dp_key}', color=ax_color)
+        ax.set_ylabel(dp_key)
+        ax.tick_params(axis='y')
 
-        figlegend = plt.figure(figsize=(len(labels),  1))
+        # axx = ax.twinx()
+        # axx.margins(y=0.1)
+        # sns.lineplot(
+        #     x=varying_psi_type, y='Value', data=setting_psi_df[setting_psi_df['Metric'] == 'NDCG'],
+        #     color=axx_color, ax=axx, **style_kws
+        # )
+        # axx.set_xlabel('')
+        # axx.set_ylabel('NDCG', color=axx_color)
+        # axx.tick_params(axis='y', labelcolor=axx_color)
+
+        ax.grid(axis='both', which='major', ls=':', color='k')
+        ax.xaxis.set_major_locator(mpl_tickers.FixedLocator(alpha_df[alpha_key].sort_values().unique().astype(float)))
+        ax.xaxis.set_major_formatter(mpl_tickers.FixedFormatter(['0.05','0.1','0.2','0.5']))
+        # ax.xaxis.set_major_formatter(mpl_tickers.StrMethodFormatter('{x:.2f}'))
+        # axx.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter("{x:.2f}"))
+        # locator with at most 3 decimal places for the y-axis
+        ax.yaxis.set_major_locator(mpl_tickers.LinearLocator(4))
+        ax.yaxis.set_major_formatter(mpl_tickers.StrMethodFormatter('{x:.2f}'))
+        # axx.yaxis.set_major_locator(mpl_tickers.LinearLocator(6))
+
+        ax_handles, ax_labels = ax.get_legend_handles_labels()
+        # axx_handles, axx_labels = axx.get_legend_handles_labels()
+        # handles, labels = ax_handles + axx_handles, ax_labels + axx_labels
+        handles, labels = ax_handles[:len(models_order)], ax_labels[:len(models_order)]
+        ax.get_legend().remove()
+        # axx.get_legend().remove()
+
+        fig.savefig(
+            os.path.join(os.path.dirname(out_path), 'varying_alpha_lineplot_all_datasets.pdf'),
+            bbox_inches='tight', pad_inches=0, dpi=300
+        )
+        plt.close(fig)
+
+        figlegend = plt.figure(figsize=(1, len(labels)))
         figlegend.legend(
-            handles, labels, loc='center', frameon=False, fontsize=12, ncol=len(labels),
-            markerscale=0.7, handlelength=5, # handletextpad=4, columnspacing=2, borderpad=0.1
+            handles, labels, loc='center', frameon=False, fontsize=18, ncol=1,
+            markerscale=0.7, handlelength=2.5, # handletextpad=4, columnspacing=2, borderpad=0.1
         )
         figlegend.savefig(
-            os.path.join(os.path.dirname(out_path), 'legend_psi_impact.pdf'),
+            os.path.join(os.path.dirname(out_path), 'legend_alpha_ablation.pdf'),
             dpi=300, bbox_inches="tight", pad_inches=0
         )
 
@@ -402,7 +464,10 @@ if __name__ == "__main__":
         for col_idx, _ in row.items():
             row_col_policy = first_best_pol_orig_df_pivot.loc[row_idx, (*col_idx[:1], '')].split('{')[-1].split('}')[0]
             if "Aug" in row_idx and '' not in col_idx:
-                pval_str = pval_symbol(test_orig_pert_pval_df_idx.loc[(*row_idx[:2], *col_idx, row_col_policy), 'P_value'])
+                try:
+                    pval_str = pval_symbol(test_orig_pert_pval_df_idx.loc[(*row_idx[:2], *col_idx, row_col_policy), 'P_value'])
+                except KeyError:
+                    pval_str = ''
                 if pval_str:
                     pval_str = f"$^{PVAL_005}$"
                 row_col_val = first_best_pol_orig_df_pivot.loc[row_idx, col_idx]
@@ -548,8 +613,9 @@ if __name__ == "__main__":
             'Item': ['Item'],
         }
 
-        fs_titles_labels = 26
-        fs_ticks = 22
+        fs_titles_labels = 30
+        fs_ticks = 26
+        sns.set_context("paper")
 
         for (giant_sa, giant_mod), giant_samod_df in merged_del_dist_giant_df.groupby(["Sens Attr", "Model"]):
             if giant_sa in rq3_confs:
@@ -594,7 +660,7 @@ if __name__ == "__main__":
                                 style=giant_hue_col,
                                 style_order=giant_hue_col_order[giant_sa],
                                 markers=markers_map,
-                                markersize=25,
+                                markersize=30,
                                 lw=2,
                                 dashes=False,
                                 legend="full",
@@ -656,5 +722,299 @@ if __name__ == "__main__":
                 # giant_fig.tight_layout(pad=0.4, w_pad=0.5, h_pad=0.4)
                 giant_fig.savefig(
                     os.path.join(os.path.dirname(out_path), f"{giant_sa}_{giant_mod}_{'_'.join(rq3_dsets)}_del_dist_plot_per_gm.pdf"),
-                    bbox_inches="tight", pad_inches=0, dpi=250
+                    bbox_inches="tight", pad_inches=0, dpi=300
                 )
+
+    shift_plots_path = os.path.join(os.path.dirname(out_path), 'shift_plots')
+    os.makedirs(shift_plots_path, exist_ok=True)
+
+    shift_per_group_df["Dataset"] = shift_per_group_df["Dataset"].map(dataset_map)
+    total_shift_df["Dataset"] = total_shift_df["Dataset"].map(dataset_map)
+    shift_per_group_df["Policy"] = shift_per_group_df["Policy"].str.replace('IP+IR', 'IR+IP')
+    total_shift_df["Policy"] = total_shift_df["Policy"].str.replace('IP+IR', 'IR+IP')
+    shift_per_group_df["Sens Attr"] = shift_per_group_df["Sens Attr"].map(group_attr_map)
+    total_shift_df["Sens Attr"] = total_shift_df["Sens Attr"].map(group_attr_map)
+    shift_per_group_df.to_csv(os.path.join(out_path, 'all_policies_shift_per_group_df.csv'), index=False)
+    total_shift_df.to_csv(os.path.join(out_path, 'all_policies_total_shift_df.csv'), index=False)
+
+    total_shift_dfs_to_merge = []
+    for dirpath, _, merged_csvs in os.walk(os.path.dirname(out_path)):
+        if merged_csvs and '.ipynb_checkpoints' not in dirpath:
+            for mc in merged_csvs:
+                if mc == 'all_policies_total_shift_df.csv' and any(x in dirpath for x in dataset_map.keys()):
+                    total_shift_dfs_to_merge.append(pd.read_csv(os.path.join(dirpath, mc)))
+
+    merged_total_shift_df = pd.concat(total_shift_dfs_to_merge, axis=0, ignore_index=True)
+
+    settings_cols = ["Dataset", "Model", "Policy"]
+    best_settings = first_best_pol_orig_df[settings_cols].drop_duplicates().query('Policy != "Orig"').reset_index(drop=True)
+    merged_best_total_shift_df = merged_total_shift_df.join(best_settings.set_index(settings_cols), on=settings_cols, how='inner')
+
+    for metr in ["$\Delta$NDCG Gain", "NDCG Gain"]:
+        for do_abs in [False, True]:
+            for plot_shift_df, plot_shift_name in zip([merged_best_total_shift_df, merged_total_shift_df], ['best_total_shift', 'total_shift']):
+                # ---------- single-panel regplot (ΔFairness) ----------
+                if do_abs:
+                    plot_shift_df[metr] = plot_shift_df[metr].abs()
+                    plot_shift_name = 'abs_' + plot_shift_name
+
+                plot_shift_df[metr + " Sign"] = plot_shift_df[metr].map(lambda x: "Gain >= 1" if x >= 1 else ("Gain >= 0" if x >= 0 else "Gain < 0"))
+
+                # remove outliers based on 5th and 95th percentiles
+                plot_shift_df = plot_shift_df[plot_shift_df[metr].between(
+                    plot_shift_df[metr].quantile(0.05),
+                    plot_shift_df[metr].quantile(0.95)
+                )]
+                
+                fig, ax = plt.subplots(figsize=(24,12))
+                # ax2 = ax.twinx()
+                sns.regplot(
+                    data=plot_shift_df, x="Shift", y=metr, scatter=False, line_kws=dict(alpha=0.9), ax=ax
+                )
+                # sns.regplot(
+                #     data=plot_shift_df, x="Shift", y="NDCG Gain",
+                #     scatter_kws=dict(s=30, alpha=0.7, color='green'), line_kws=dict(alpha=0.9, color='green'),
+                #     ax=ax2
+                # )
+
+                # 4) Overlay points with color by sign (to keep regplot line but custom colors)
+                for sign, df_sub in plot_shift_df.groupby(metr + " Sign"):
+                    ax.scatter(
+                        df_sub["Shift"],
+                        df_sub[metr],
+                        s=40,
+                        alpha=0.8,
+                        label=sign
+                    )
+
+                ax.set_xlabel("Validation→Test Energy Distance (DEG, DTY, IGD)")
+                # color ylabel based on the color of the regplot line, but also tick labels
+                ax.set_ylabel("Ratio Gain (test / val)")  #, color='blue')
+                # ax2.set_ylabel("NDCG Gain (test / val)", color='green')
+                # ax.tick_params(axis='y', labelcolor='blue')
+                # ax2.tick_params(axis='y', labelcolor='green')
+                ax.set_ylim(-7, 7)
+
+                # 5) Reference lines: 0 (no generalization) and 1 (test = val). Add the value 1 on y-axis
+                ax.axhline(0, linestyle="--", linewidth=1, alpha=0.9, color='gray')
+                ax.axhline(1, linestyle="--", linewidth=1, alpha=0.9, color='gray')
+                ax.text(-0.015, 0.95, "1", ha="left", va="center", transform=ax.get_yaxis_transform(), color='gray', fontsize=25)
+
+                # custom location of legend at 0.75 width and 0.95 height
+                ax.legend(title="Ratio Sign", fontsize=24, title_fontsize=26, loc='upper center', bbox_to_anchor=(0.70, 0.99))
+
+                # Spearman ρ (global)
+                rho, p = spearmanr(plot_shift_df["Shift"], plot_shift_df[metr])
+                ax.text(0.02, 0.98, f"Spearman ρ = {rho:.2f} (p={p:.3g})",
+                        ha="left", va="top", transform=ax.transAxes)
+
+                fig.tight_layout()
+                fig.savefig(
+                    os.path.join(shift_plots_path, f'{"Delta" if "Delta" in metr else "NDCG"}_{plot_shift_name}_ratio_regplot.pdf'),
+                    bbox_inches="tight", pad_inches=0, dpi=300
+                )
+                plt.close(fig)
+
+                for tot_shift_dset, tot_shift_dset_df in plot_shift_df.groupby("Dataset"):
+                    fig, ax = plt.subplots(figsize=(15,12))
+                    ax2 = ax.twinx()
+                    sns.regplot(
+                        data=tot_shift_dset_df, x="Shift", y=metr,
+                        scatter_kws=dict(s=30, alpha=0.7), line_kws=dict(alpha=0.9),
+                        ax=ax
+                    )
+                    # sns.regplot(
+                    #     data=tot_shift_dset_df, x="Shift", y="NDCG Gain",
+                    #     scatter_kws=dict(s=30, alpha=0.7, color='orange'), line_kws=dict(alpha=0.9, color='orange'),
+                    #     ax=ax2
+                    # )
+                    ax.set_xlabel("Validation→Test Energy Distance (DEG, DTY, IGD)")
+                    ax.set_ylabel(("$\Delta$" if "Delta" in metr else "NDCG") + " Gain (test − val)", color='blue')
+                    # ax2.set_ylabel("NDCG Gain (test − val)", color='orange')
+                    ax.tick_params(axis='y', labelcolor='blue')
+                    # ax2.tick_params(axis='y', labelcolor='orange')
+
+                    # Spearman ρ (global)
+                    rho, p = spearmanr(tot_shift_dset_df["Shift"], tot_shift_dset_df[metr])
+                    ax.text(0.02, 0.98, f"Spearman ρ = {rho:.2f} (p={p:.3g})",
+                            ha="left", va="top", transform=ax.transAxes)
+
+                    fig.tight_layout()
+                    fig.savefig(
+                        os.path.join(shift_plots_path, f'{("Delta" if "Delta" in metr else "NDCG")}_{plot_shift_name}_regplot_{tot_shift_dset}.pdf'),
+                        bbox_inches="tight", pad_inches=0, dpi=300
+                    )
+                    plt.close(fig)
+
+                # ---------- if you want color by policy, use lmplot (regplot has no hue) ----------
+                g = sns.lmplot(
+                    data=plot_shift_df, x="Shift", y=metr, hue="Policy",
+                    scatter_kws=dict(s=25, alpha=0.6), line_kws=dict(alpha=0.9),
+                    height=15, aspect=0.9
+                )
+
+                # add per-hue Spearman ρ in the legend labels
+                labels = []
+                for pol, dsub in plot_shift_df.groupby("Policy"):
+                    r, p = spearmanr(dsub["Shift"], dsub[metr])
+                    labels.append(f"{pol} (ρ={r:.2f})")
+                g._legend.set_title("Policy")
+                for txt, lab in zip(g._legend.texts, labels):
+                    txt.set_text(lab)
+                # remove current legend and recreate with ncol = number of policies
+
+                g.figure.legend(
+                    handles=g._legend.legend_handles,
+                    labels=g._legend.texts,
+                    title="Policy",
+                    loc="upper center",
+                    bbox_to_anchor=(0.5, 1),
+                    ncol=len(labels)
+                )
+
+                g.figure.tight_layout()
+                g.figure.savefig(
+                    os.path.join(shift_plots_path, f'{("Delta" if "Delta" in metr else "NDCG")}_{plot_shift_name}_lmplot_by_policy.pdf'),
+                    bbox_inches="tight", pad_inches=0, dpi=300
+                )
+                plt.close('all')
+
+    shift_per_group_dfs_to_merge = []
+    for dirpath, _, merged_csvs in os.walk(os.path.dirname(out_path)):
+        if merged_csvs and '.ipynb_checkpoints' not in dirpath:
+            for mc in merged_csvs:
+                if mc == 'all_policies_shift_per_group_df.csv' and any(x in dirpath for x in dataset_map.keys()):
+                    shift_per_group_dfs_to_merge.append(pd.read_csv(os.path.join(dirpath, mc)))
+
+    merged_shift_per_group_df = pd.concat(shift_per_group_dfs_to_merge, axis=0, ignore_index=True)
+    merged_shift_per_group_df_valid, merged_shift_per_group_df_test = merged_shift_per_group_df, merged_shift_per_group_df.copy(deep=True)
+    merged_shift_per_group_df_valid = merged_shift_per_group_df_valid.rename(columns={'Valid NDCG Gain': 'NDCG Gain'}).drop(columns=['Test NDCG Gain'])
+    merged_shift_per_group_df_test = merged_shift_per_group_df_test.rename(columns={'Test NDCG Gain': 'NDCG Gain'}).drop(columns=['Valid NDCG Gain'])
+    merged_shift_per_group_df_valid['Split'], merged_shift_per_group_df_test['Split'] = 'Valid', 'Test'
+    merged_shift_per_group_df = pd.concat([merged_shift_per_group_df_valid, merged_shift_per_group_df_test], axis=0, ignore_index=True)
+
+    sns.set_theme(style="whitegrid", font_scale=3)
+
+    colors = dict(zip(sorted(merged_shift_per_group_df['Demo Group'].unique()), sns.color_palette("rocket", len(merged_shift_per_group_df['Demo Group'].unique()))))
+    giant_fig, giant_ax = plt.subplots(figsize=(24, 12))
+
+    best_shift_per_group_df = merged_shift_per_group_df.join(best_settings.set_index(settings_cols), on=settings_cols, how='inner').dropna()
+    best_shift_per_group_df["Model (Policy)"] = best_shift_per_group_df[["Model", "Policy"]].apply(lambda x: f"{x[0]} ({x[1]})", axis=1)
+    for dset, dset_shift_per_group_df in best_shift_per_group_df.groupby("Dataset"):
+        fig, ax = plt.subplots(figsize=(20, 12))
+        sns.scatterplot(
+            data=dset_shift_per_group_df, x="Shift", y="NDCG Gain", hue="Split",
+            palette={'Valid': 'white', 'Test': 'black'},
+            edgecolor='black', s=400, zorder=3,
+            style="Model (Policy)", ax=ax
+        )
+        sns.scatterplot(
+            data=dset_shift_per_group_df, x="Shift", y="NDCG Gain", hue="Split",
+            palette={'Valid': 'white', 'Test': 'black'},
+            edgecolor='black', s=400, zorder=3,
+            style="Model (Policy)", ax=giant_ax
+        )
+
+        for (_, _, dg), mod_pol_shift_per_group_df in dset_shift_per_group_df.groupby(["Model", "Policy", "Demo Group"]):
+            x = mod_pol_shift_per_group_df['Shift'].iloc[0]
+            y_valid = mod_pol_shift_per_group_df.loc[mod_pol_shift_per_group_df['Split'] == 'Valid', 'NDCG Gain'].iloc[0]
+            y_test = mod_pol_shift_per_group_df.loc[mod_pol_shift_per_group_df['Split'] == 'Test', 'NDCG Gain'].iloc[0]
+            y_top = max(y_valid, y_test)
+            ax.annotate(
+                dg, 
+                xy=(x, y_top), 
+                xytext=(0, 10),  # 10 points above
+                textcoords='offset points',
+                ha='center', va='bottom'# , fontsize=36
+            )
+            giant_ax.annotate(
+                dg,
+                xy=(x, y_top), 
+                xytext=(0, 10),  # 10 points above
+                textcoords='offset points',
+                ha='center', va='bottom'# , fontsize=36
+            )
+
+            ax.plot(
+                [x, x],
+                [y_valid, y_test],
+                color=colors[dg],
+                lw=2.5, alpha=0.9
+            )
+            giant_ax.plot(
+                [x, x],
+                [y_valid, y_test],
+                color=colors[dg],
+                lw=2.5, alpha=0.9
+            )
+
+        # for i, row in shift_per_group_df.iterrows():
+        #     x = row['Shift']
+        #     if x is None or np.isnan(x):
+        #         continue
+        #     y_valid, y_test = row['Valid NDCG Gain'], row['Test NDCG Gain']
+        #     color = colors[row['Demo Group']]
+
+        #     # Vertical line connecting Valid and Test
+        #     ax.plot([x, x], [y_valid, y_test], color=color, lw=2.5, alpha=0.9)
+
+        #     # Endpoints
+        #     # Have different markers per dataset
+        #     sns.scatterplot(
+        #         x=[x, x], y=[y_valid, y_test], hue=['Valid', 'Test'],
+        #         palette={'Valid': 'white', 'Test': 'black'},
+        #         edgecolor='black', s=55, zorder=3,
+        #         style="Dataset",
+        #         legend=False, ax=ax
+        #     )
+        #     ax.scatter(x, y_valid, s=55, color='white', edgecolor='black', zorder=3, label='Valid' if i == 0 else "")
+        #     ax.scatter(x, y_test,  s=55, color='black',  edgecolor='black', zorder=3, label='Test'  if i == 0 else "")
+
+        #     # Add text label near the higher point
+        #     y_top = max(y_valid, y_test)
+        #     ax.annotate(
+        #         f"{row['Demo Group']}", 
+        #         xy=(x, y_top), 
+        #         xytext=(0, 5),  # 5 points above
+        #         textcoords='offset points',
+        #         ha='center', va='bottom', fontsize=8
+        #     )
+
+        # --- Aesthetics ---
+        ax.set_xlabel("Validation→Test Energy Distance (DEG, DTY, IGD)")
+        ax.set_ylabel("NDCG Gain")
+        giant_ax.set_xlabel("Validation→Test Energy Distance (DEG, DTY, IGD)")
+        giant_ax.set_ylabel("NDCG Gain")
+        # ax.set_title(f"Validation vs Test Generalization — {dset} · {mod} · {curr_policy}\nVertical dumbbells: Valid (○) vs Test (●) Gains")
+
+        handles, labels = ax.get_legend_handles_labels()
+        handles[0].set_label('')
+        handles = handles[1:3] + [handles[0]] + handles[4:]
+        labels = labels[1:3] + [""] + labels[4:]
+        ax.legend(
+            handles, labels, loc='lower center', ncol=len(labels), bbox_to_anchor=(0.5, 1.02), fontsize=17, frameon=False,
+            columnspacing=1.5, handletextpad=0.5
+        )
+        sns.despine()
+        fig.tight_layout()
+        fig.savefig(os.path.join(shift_plots_path, f'{dset}_best_shift_dumbbell_plot.pdf'), bbox_inches="tight", pad_inches=0, dpi=300)
+        plt.close(fig)
+
+        # handles.insert(3, handles[0])
+        # labels.insert(3, '  ')  # spacer
+        # figlegend = plt.figure(figsize=(len(labels),  1))
+        # figlegend.legend(
+        #     handles, labels, loc='center', frameon=False, fontsize=12, ncol=len(labels),
+        #     markerscale=0.7, # handletextpad=4, columnspacing=2, borderpad=0.1
+        # )
+        # figlegend.savefig(
+        #     os.path.join(os.path.join(shift_plots_path, f'{dset}_legend_best_shift_dumbbell.pdf')),
+        #     dpi=300, bbox_inches="tight", pad_inches=0
+        # )
+        # plt.close(figlegend)
+
+    giant_ax.get_legend().remove()
+    sns.despine()
+    giant_fig.tight_layout()
+    giant_fig.savefig(os.path.join(shift_plots_path, 'giant_best_shift_dumbbell_plot.pdf'), bbox_inches="tight", pad_inches=0, dpi=300)
+    plt.close(giant_fig)

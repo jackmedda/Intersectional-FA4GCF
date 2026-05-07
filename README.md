@@ -2,6 +2,27 @@
 
 This framework extends the codebase of [FA4GCF](https://github.com/jackmedda/FA4GCF) to intersectional fairness.
 
+## 📜 Cite
+If you find this work useful for your research or development, please cite with:
+
+```bibtex
+
+@article{10.1145/3798097,
+author = {Boratto, Ludovico and Fabbri, Francesco and Fenu, Gianni and Marras, Mirko and Medda, Giacomo},
+title = {Graph Augmentation for Intersectional Unfairness Mitigation: A Study across Dataset Scales and Interaction Densities},
+year = {2026},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3798097},
+doi = {10.1145/3798097},
+abstract = {Recent work on fairness-aware graph collaborative filtering (GCF) has shown the effectiveness of graph augmentation as a post-processing strategy for mitigating consumer unfairness. However, most studies remain confined to binary fairness setups and operate under limited experimental conditions, often relying on sparse and small-scale datasets. In this paper, we extend our fairness-aware augmentation method to address intersectional unfairness across demographic subgroups, a setting where the intersection of multiple sensitive attributes leads to fine-grained subgroups. To this end, we reformulate the fairness objective to incorporate intersectional demographic groups and evaluate our extended method across interaction configurations that vary in density and scale. Our results reveal that the effectiveness of fair graph augmentations is model-dependent and sensitive to dataset properties. We show that the edges selected during augmentation tend to concentrate around interpretable structural patterns driven by the connected nodes’ characteristics. Furthermore, analyzing how these augmented edges differ across graph-level attributes offers actionable insights into the potential benefits of fairness-oriented graph modifications. Finally, we compare our method with recent fairness-aware baselines, explore the impact of augmenting different graph regions, and assess our mitigation strategy under scenarios with minimal unfairness. Source code publicly available at: https://github.com/jackmedda/Intersectional-FA4GCF.},
+note = {Just Accepted},
+journal = {ACM Trans. Recomm. Syst.},
+month = feb,
+keywords = {Recommender Systems, Consumer Fairness, Graph Collaborative Filtering, Graph Augmentation, Large-scale Settings}
+}
+```
+
 # Requirements
 Our framework was tested on Python 3.8 and 3.9 with the libraries listed in the
 [requirements.txt](fa4gcf/requirements.txt) that can be installed with:
